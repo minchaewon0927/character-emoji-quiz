@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>캐릭터 이모지 퀴즈</title>
+<style>
+  :root {
+    --bg: #f4f1fb; --card: #ffffff; --text: #25213a; --muted: #7a7594;
+    --accent: #6c4cf1; --ok: #1fa971; --no: #e5484d; --border: #e1dcf3;
+    --bot: #efeaff; --me: #6c4cf1; --warn: #f59f00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16131f; --card: #211d30; --text: #f0edfa; --muted: #9f99bb;
+      --border: #3a3454; --bot: #2e2845;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--text); padding: 12px;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  }
+  .app {
+    width: 100%; max-width: 440px; height: min(680px, 100%);
+    background: var(--card); border-radius: 20px; overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0,0,0,.12);
+    display: flex; flex-direction: column;
+  }
+  header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; }
+  .meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .bar { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; margin-top: 8px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+  /* 타이머 */
+  .timer { display: flex; align-items: center; gap: 10px; margin-top: 10px; transition: opacity .2s; }
+  .timer.off { opacity: .35; }
+  .timer-num { min-width: 44px; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+  .timer .bar { flex: 1; margin-top: 0; height: 8px; }
+  .timer .bar > div { width: 100%; background: var(--ok); transition: none; }
+  .timer.warn .bar > div { background: var(--warn); }
+  .timer.danger .bar > div { background: var(--no); }
+  .timer.danger .timer-num { color: var(--no); }
+
+  #chat {
+    flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 16px; line-height: 1.45; word-break: break-word; animation: in .2s ease; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .msg.bot { align-self: flex-start; background: var(--bot); border-bottom-left-radius: 4px; }
+  .msg.me  { align-self: flex-end; background: var(--me); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.big { font-size: 64px; line-height: 1.2; padding: 10px 18px; }
+  .msg.ok  { background: var(--ok); color: #fff; }
+  .msg.no  { background: var(--no); color: #fff; }
+  .intro { margin: auto 0; display: grid; gap: 14px; }
+  .intro h2 { margin: 0; font-size: 22px; }
+  .intro p { margin: 0; line-height: 1.6; color: var(--muted); }
+  .intro .howto { padding: 14px; border-radius: 14px; background: var(--bot); color: var(--text); }
+  .intro label { font-size: 14px; font-weight: 600; }
+  .intro input { width: 100%; }
+  .intro button { min-height: 46px; }
+  .pause-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .pause-row button { min-height: 34px; padding: 0 12px; font-size: 13px; }
+
+  form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+  input {
+    flex: 1; padding: 12px 14px; font-size: 16px; border-radius: 12px;
+    border: 2px solid var(--border); background: var(--bg); color: var(--text); outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  button {
+    padding: 0 18px; font-size: 15px; font-weight: 600; border: none; border-radius: 12px;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button:hover { opacity: .9; }
+  button:disabled, input:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🎭 캐릭터 이모지 퀴즈</h1>
+    <div class="meta"><span id="count"></span><span id="score"></span></div>
+    <div class="bar"><div id="progress"></div></div>
+    <div class="timer off" id="timer">
+      <div class="bar"><div id="timerFill"></div></div>
+      <div class="timer-num" id="timerNum">⏱️</div>
+    </div>
+    <div class="pause-row"><button id="pauseButton" type="button" hidden>일시정지</button></div>
+  </header>
+  <div id="chat"></div>
+  <form id="form" autocomplete="off">
+    <input id="input" type="text" placeholder="정답을 입력하세요 (모르면 '패스')" />
+    <button id="send" type="submit">보내기</button>
+  </form>
+</div>
+
+<script>
+  /* ==========================================================
+     ✏️ 이모지와 정답 목록
+     형식:  ["이모지", "정답"],
+     여러 정답 인정:  ["이모지", ["정답", "다른 표기", "줄임말"]],
+     (맨 앞의 정답이 틀렸을 때/패스했을 때 화면에 보여집니다)
+     * \u200d 는 사람 이모지(♀️ ♂️ 직업)를 이어 주는 보이지 않는 연결 문자예요.
+  ========================================================== */
+  const QUESTIONS = [
+    ["🧒🏻🖍️🔴🟡", ["짱구", "신짱구", "짱구는못말려"]],
+    ["👃💧🗿", "맹구"],
+    ["⚪🐶🍚🏠", ["흰둥이", "흰둥"]],
+    ["🐱🔵⚪", ["하치와레", "하치와"]],
+    ["🌰🍺🍶", ["쿠리만쥬", "구리만쥬"]],
+    ["🐱🎀🔴⚪", ["헬로키티", "키티"]],
+    ["🐶🍮💛", ["폼폼푸린", "푸린"]],
+    ["🥟👓", ["안경만두", "만두"]],
+    ["🩷🦫🧁", "루피"],
+    ["🐧👓", "뽀로로"],
+    ["🧽🍍🍔", ["스폰지밥", "스펀지밥"]],
+    ["🦀💵💰", ["집게사장", "크랩스씨", "사장님"]],
+    ["🐻😴🍯", ["리락쿠마", "리라쿠마"]],
+    ["☃️🥕❄️", "올라프"],
+    ["❄️👸👑🏰", ["엘사", "겨울왕국"]],
+    ["🍎👸🪞", "백설공주"],
+    ["🧜\u200d♀️🔴🐚🌊", ["애리얼", "아리엘", "에리얼", "인어공주"]],
+    ["🤥🪵", "피노키오"],
+    ["👠🧹🎃🕛", "신데렐라"],
+    ["🧚\u200d♀️✨🪄", "팅커벨"],
+    ["🐭🖤🔴💛", ["미키마우스", "미키"]],
+    ["🔵👓💧🌧️", "슬픔이"],
+    ["👽💙🌺🛸", "스티치"],
+    ["🐰🚔🥕👮\u200d♀️", ["주디", "주디홉스"]],
+    ["💛🍩📺", ["심슨", "호머심슨", "심슨가족"]],
+    ["🕷️🕸️🔴🔵", ["스파이더맨", "스파이더"]],
+    ["🟩💥🥊", "헐크"],
+    ["🧅🟢👁️✨", "양파쿵야"],
+    ["🍄🧢👨\u200d🔧⭐", ["슈퍼마리오", "마리오"]],
+    ["👸🩷👑🍄", ["피치공주", "피치"]],
+    ["🩷⭐🍰", "커비"],
+    ["🩷🧚\u200d♀️💖", "하츄핑"],
+    ["🍑🩷", "어피치"],
+    ["⚡🐭💛", "피카츄"],
+    ["🦎🔥🧡", "파이리"],
+    ["🐱💙🔔🚪", "도라에몽"],
+    ["🐭🧀🏃\u200d♂️💨", "제리"],
+    ["🧸🍯", ["곰돌이푸", "푸"]],
+    ["🤠👢🐎⭐", "우디"],
+    ["🏴\u200d☠️🧭🍾🗡️", ["잭 스패로우", "잭스패로", "캡틴잭스패로우"]],
+    ["🦔💙👟💨", "소닉"],
+    ["🩶☂️🌳🍃", ["토토로", "이웃집토토로"]],
+    ["🟧🔵🐉💥", ["손오공", "오공"]],
+    ["🧞\u200d♂️💙🪔✨", "지니"],
+    ["🍪🏃\u200d♂️🍭", ["용감한쿠키", "용감한 쿠키"]],
+    ["🦇🖤🌃", "배트맨"],
+    ["🌙👧🎀", ["세일러문", "세일러 문"]],
+    ["🐱🍠📦", "춘식이"]
+  ];
+
+  const SHUFFLE_ORDER = true;   // false면 적은 순서대로 출제
+  const MAX_QUESTIONS = 20;     // 한 판에 나올 문제 수 (전부 내려면 큰 숫자로)
+  const TIME_LIMIT = 15;        // 문제당 제한 시간(초)  ※ 0이면 시간 제한 없음
+
+  /* ================== 아래는 수정하지 않아도 됩니다 ================== */
+  const $ = (id) => document.getElementById(id);
+  const chat = $("chat"), form = $("form"), input = $("input"), sendBtn = $("send");
+  const timerEl = $("timer"), timerFill = $("timerFill"), timerNum = $("timerNum");
+  const pauseButton = $("pauseButton");
+
+  // 비교용 정규화: 공백/특수문자 제거 + 소문자
+  const norm = (s) => String(s).toLowerCase().replace(/[\s\-_.,!?'"~·]/g, "");
+
+  const ALL = QUESTIONS.map(([emoji, ans]) => {
+    const answers = (Array.isArray(ans) ? ans : [ans]).map(a => String(a).trim()).filter(Boolean);
+    return { emoji: String(emoji).trim(), answers };
+  }).filter(q => q.emoji && q.answers.length);
+
+  let questions = [], index = 0, score = 0, tries = 0, active = false;
+  let playerName = "";
+  let timerId = null, deadline = 0, remainingMs = 0, paused = false;
+
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function say(text, cls = "bot") {
+    const el = document.createElement("div");
+    el.className = "msg " + cls;
+    el.textContent = text;
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+    return el;
+  }
+
+  function updateHeader() {
+    $("count").textContent = `문제 ${Math.min(index + 1, questions.length)} / ${questions.length}`;
+    $("score").textContent = `점수 ${score}`;
+    $("progress").style.width = `${(index / questions.length) * 100}%`;
+  }
+
+  function setInput(enabled) {
+    input.disabled = sendBtn.disabled = !enabled;
+    if (enabled) input.focus();
+  }
+
+  /* ---------- 타이머 ---------- */
+  function resetTimerUI() {
+    timerEl.classList.add("off");
+    timerEl.classList.remove("warn", "danger");
+    timerFill.style.width = "100%";
+    timerNum.textContent = TIME_LIMIT > 0 ? `${TIME_LIMIT}초` : "∞";
+  }
+
+  function stopTimer() {
+    if (timerId) { clearInterval(timerId); timerId = null; }
+    timerEl.classList.add("off");
+  }
+
+  function startTimer() {
+    stopTimer();
+    if (TIME_LIMIT <= 0) { resetTimerUI(); return; }
+    timerEl.classList.remove("off", "warn", "danger");
+    deadline = Date.now() + TIME_LIMIT * 1000;
+    renderTimer();
+    timerId = setInterval(renderTimer, 100);
+  }
+
+  function renderTimer() {
+    const left = Math.max(0, deadline - Date.now());
+    const sec = left / 1000;
+    timerFill.style.width = `${(left / (TIME_LIMIT * 1000)) * 100}%`;
+    timerNum.textContent = `${Math.ceil(sec)}초`;
+    timerEl.classList.toggle("danger", sec <= 3);
+    timerEl.classList.toggle("warn", sec > 3 && sec <= 5);
+    if (left <= 0) timeUp();
+  }
+
+  function timeUp() {
+    if (!active) return;
+    stopTimer();
+    timerNum.textContent = "0초";
+    const q = questions[index];
+    say(`⏰ 시간 초과! 정답은 "${q.answers[0]}" 였어요!`, "bot no");
+    setInput(false);
+    next();
+  }
+
+  /* ---------- 게임 흐름 ---------- */
+  function showIntro() {
+    stopTimer();
+    resetTimerUI();
+    pauseButton.hidden = true;
+    chat.innerHTML = `<section class="intro">
+      <h2>🎭 캐릭터 이모지 퀴즈</h2>
+      <p>이모지 힌트를 보고 어떤 캐릭터인지 맞혀보세요!</p>
+      <p class="howto">총 ${Math.min(MAX_QUESTIONS, ALL.length)}문제가 무작위로 나와요. 문제마다 ${TIME_LIMIT}초 안에 이름을 입력하고, 모르겠으면 ‘패스’를 입력하면 됩니다. 정답을 맞힐 때마다 1점을 얻어요.</p>
+      <label for="nickname">닉네임</label>
+      <input id="nickname" type="text" maxlength="20" placeholder="닉네임을 입력하세요" autocomplete="nickname">
+      <button id="startGame" type="button">게임 시작</button>
+    </section>`;
+    setInput(false);
+    const nicknameInput = $("nickname");
+    nicknameInput.focus();
+    $("startGame").addEventListener("click", beginFromIntro);
+    nicknameInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); beginFromIntro(); }
+    });
+  }
+
+  function beginFromIntro() {
+    playerName = $("nickname").value.trim() || "플레이어";
+    start();
+  }
+
+  function start() {
+    stopTimer();
+    resetTimerUI();
+    paused = false;
+    pauseButton.hidden = false;
+    pauseButton.textContent = "일시정지";
+    chat.innerHTML = "";
+    if (!ALL.length) {
+      say("코드의 QUESTIONS에 문제를 넣어 주세요!");
+      setInput(false);
+      return;
+    }
+    questions = (SHUFFLE_ORDER ? shuffle(ALL) : ALL.slice()).slice(0, MAX_QUESTIONS);
+    index = 0; score = 0;
+    say(`${playerName}님, 이모지를 보고 캐릭터 이름을 입력해 주세요 😊`);
+    say(TIME_LIMIT > 0
+      ? `문제당 제한 시간은 ${TIME_LIMIT}초예요. 모르겠으면 '패스'라고 입력하세요.`
+      : "모르겠으면 '패스'라고 입력하면 넘어가요.");
+    ask();
+  }
+
+  function ask() {
+    tries = 0;
+    updateHeader();
+    say(questions[index].emoji, "bot big");
+    active = true;
+    setInput(true);
+    pauseButton.hidden = false;
+    startTimer();
+  }
+
+  function next() {
+    active = false;
+    paused = false;
+    pauseButton.hidden = true;
+    index++;
+    if (index >= questions.length) return finish();
+    setTimeout(ask, 800);
+  }
+
+  function finish() {
+    active = false;
+    paused = false;
+    pauseButton.hidden = true;
+    stopTimer();
+    resetTimerUI();
+    timerNum.textContent = "끝";
+    updateHeader();
+    $("progress").style.width = "100%";
+    const ratio = score / questions.length;
+    let rank;
+    if (ratio === 1)       rank = "🏆 완벽해요! 이모지 박사님!";
+    else if (ratio >= 0.7) rank = "😎 대단해요! 거의 다 맞췄어요!";
+    else if (ratio >= 0.4) rank = "🙂 괜찮아요! 한 번 더 도전해 볼까요?";
+    else                   rank = "💪 다시 도전해서 실력을 키워 봐요!";
+    say(`${playerName}님, 최종 점수는 ${score} / ${questions.length}점이에요.`);
+    say(rank);
+    say("'다시'라고 입력하면 새로 시작해요 🔄");
+    setInput(true);
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    say(text, "me");
+
+    // 게임 종료(또는 문제 사이 대기) 중
+    if (!active) {
+      if (index >= questions.length) {
+        if (["다시", "재시작", "restart"].includes(norm(text))) start();
+        else say("'다시'라고 입력하면 새로 시작해요 🔄");
+      }
+      return;
+    }
+
+    const q = questions[index];
+
+    if (["패스", "pass", "skip", "넘어가기"].includes(norm(text))) {
+      stopTimer();
+      say(`정답은 "${q.answers[0]}" 였어요!`, "bot no");
+      setInput(false);
+      return next();
+    }
+
+    if (q.answers.some(a => norm(a) === norm(text))) {
+      stopTimer();
+      score++;
+      say("🎉 정답이에요!", "bot ok");
+      updateHeader();
+      setInput(false);
+      next();
+    } else {
+      tries++;
+      say(tries >= 2
+        ? `😢 틀렸어요! (${q.answers[0].length}글자) 다시 도전하거나 '패스'를 입력하세요.`
+        : "😢 틀렸어요! 다시 도전해 보세요.", "bot no");
+    }
+  });
+
+  pauseButton.addEventListener("click", () => {
+    if (!active && !paused) return;
+    if (!paused) {
+      remainingMs = Math.max(0, deadline - Date.now());
+      if (timerId) { clearInterval(timerId); timerId = null; }
+      paused = true;
+      timerEl.classList.add("off");
+      pauseButton.textContent = "이어하기";
+      setInput(false);
+      say("⏸️ 일시정지했어요. ‘이어하기’를 누르면 계속할 수 있어요.");
+    } else {
+      paused = false;
+      deadline = Date.now() + remainingMs;
+      pauseButton.textContent = "일시정지";
+      timerEl.classList.remove("off");
+      timerId = setInterval(renderTimer, 100);
+      renderTimer();
+      setInput(true);
+    }
+  });
+
+  showIntro();
+</script>
+</body>
+</html>
+
+
+
